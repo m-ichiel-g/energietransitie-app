@@ -711,8 +711,8 @@ export default function ScenarioCalculator({
   };
 
   const subTabs = [
-    { id: 'scenarios', label: '📊 Scenario\'s', icon: '📊' },
-    { id: 'kengetallen', label: '⚙️ Kengetallen', icon: '⚙️' }
+    { id: 'scenarios', label: 'Scenario\'s', icon: '📊' },
+    { id: 'kengetallen', label: 'Kengetallen', icon: '⚙️' }
   ];
 
   return (

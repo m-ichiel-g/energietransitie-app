@@ -119,7 +119,7 @@ export default function EnergieTool() {
       const center = [(bounds.minLat + bounds.maxLat) / 2, (bounds.minLon + bounds.maxLon) / 2];
       
       // Bereken offset om gemeente in zichtbaar centrum te houden met breder dashboard
-      const offsetLon = (bounds.maxLon - bounds.minLon) * -0.45;
+      const offsetLon = (bounds.maxLon - bounds.minLon) * -0.85;
       setMapCenter([center[0], center[1] - offsetLon]);
       setMapZoom(11);
       

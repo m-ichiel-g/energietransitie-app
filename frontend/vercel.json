@@ -1,13 +1,16 @@
 {
   "version": 2,
   "buildCommand": "npm run build",
-  "devCommand": "npm start",
-  "installCommand": "npm install",
+  "outputDirectory": "build",
   "framework": "create-react-app",
   "rewrites": [
     {
       "source": "/api/(.*)",
       "destination": "/api/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ],
   "headers": [
@@ -27,6 +30,19 @@
           "value": "Content-Type"
         }
       ]
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/$1"
+    },
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
     }
   ]
 }

@@ -1,759 +1,553 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import ScenarioUpload from './components/ScenarioUpload';
+import ScenarioComparison from './components/ScenarioComparison';
+import {
+  getStrategieData,
+  berekenCO2Reductie,
+  getStrategieCodeFromKolom,
+  getStrategieLabelFromKolom,
+  getStrategieColor,
+  getStrategieIcon,
+  filterStrategies,
+  sortStrategiesForDisplay,
+  formatEuro
+} from './components/utils/scenarioCalculations';
 
+/**
+ * ScenarioCalculator v4 - Correcte layout
+ * - Sidebar vanaf absolute links (over selectie sidebar)
+ * - Volledige scenario selectie in sidebar
+ * - Verticale tabs rechts zonder emoji's
+ */
 export default function ScenarioCalculator({ 
   selectedBuurten, 
   cbsData,
   getGebiedNaam,
-  detailData 
+  detailData, 
+  onPBLDataParsed,
+  pblData
 }) {
-  const [activeSubTab, setActiveSubTab] = useState('scenarios');
-  const [kengetallen, setKengetallen] = useState({
-    // Isolatie
-    isolatieKostenBasis: 15000,
-    isolatieKostenGoed: 35000,
-    isolatieKostenZeerGoed: 55000,
-    
-    // All-Electric
-    warmtepompKosten: 18000,
-    warmtepompOnderhoud: 350,
-    elektriciteitTarief: 0.40,
-    elektriciteitsverzwaringPerWoning: 2500,
-    
-    // Hybride
-    hybridePompKosten: 12000,
-    hybridePompOnderhoud: 300,
-    groenGasTarief: 1.50,
-    
-    // Collectief Warmtenet
-    warmtenetAansluiting: 8000,
-    warmtenetLevering: 0.75,
-    warmtenetOnderhoud: 200,
-    infrastructuurKostenPerWoning: 5000,
-    
-    // Subsidies
-    isdeSubsidieWP: 2100,
-    isdeSubsidieHybride: 1500,
-    
-    // Doorlooptijd (jaren)
-    doorlooptijdAllElectric: 8,
-    doorlooptijdHybride: 6,
-    doorlooptijdCollectief: 12
+  const [activeSubTab, setActiveSubTab] = useState('pbl');
+  const [baselineJaar, setBaselineJaar] = useState('2030');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [selectedStrategies, setSelectedStrategies] = useState([
+    'Strategie_1', 'Strategie_2', 'Strategie_3', 'Strategie_4'
+  ]);
+  const [scenarioFilters, setScenarioFilters] = useState({
+    schillabel: null,
+    toonVarianten: false
   });
 
-  // CBS Measure IDs
-  const CBS_MEASURES = {
-    AARDGAS_VERBRUIK: 'M000219_2',
-    AARDGAS_WONINGEN_PCT: 'M008296',
-    EENGEZINSWONING_PCT: 'ZW10290',
-    MEERGEZINSWONING_PCT: 'ZW10340'
-  };
+  const baselineKolom = baselineJaar === '2023' ? 'Referentie_2023' : 'Referentie_2030';
 
-  // Haal gemiddelde CBS data op voor geselecteerde buurten
-  const getGemiddeldeCBSData = () => {
-    if (!detailData || selectedBuurten.length === 0) {
-      return {
-        gemiddeldGasverbruik: 1200,
-        percentageGaswoningen: 90,
-        percentageEengezins: 50,
-        percentageMeergezins: 50
-      };
+  // Tab configuratie zonder emoji's
+  const subTabs = [
+    { id: 'pbl', label: 'PBL data', color: '#83AF9A' },
+    { id: 'vergelijking', label: 'Vergelijken', color: '#7BA68C' },
+    { id: 'varianten', label: 'Varianten', color: '#6D9380' },
+    { id: 'kosten', label: 'Kosten', color: '#5F8074' },
+    { id: 'energie', label: 'Energie', color: '#516D68' },
+    { id: 'aansluitingen', label: 'Aansluitingen', color: '#43595C' }
+  ];
+
+  // Bereid scenario data voor (voor sidebar selectie)
+  const { buurten, strategieComparisons } = useMemo(() => {
+    if (!pblData || !selectedBuurten || selectedBuurten.length === 0) {
+      return { buurten: [], strategieComparisons: [] };
     }
 
-    const gasVerbruiken = selectedBuurten
-      .map(code => detailData[code]?.[CBS_MEASURES.AARDGAS_VERBRUIK])
-      .filter(val => val !== undefined && val !== null);
-    
-    const gasWoningen = selectedBuurten
-      .map(code => detailData[code]?.[CBS_MEASURES.AARDGAS_WONINGEN_PCT])
-      .filter(val => val !== undefined && val !== null);
-    
-    const eengezins = selectedBuurten
-      .map(code => detailData[code]?.[CBS_MEASURES.EENGEZINSWONING_PCT])
-      .filter(val => val !== undefined && val !== null);
-    
-    const meergezins = selectedBuurten
-      .map(code => detailData[code]?.[CBS_MEASURES.MEERGEZINSWONING_PCT])
-      .filter(val => val !== undefined && val !== null);
+    const buurtenList = selectedBuurten
+      .map(code => pblData.buurten[code])
+      .filter(b => b && b.strategieMatrix);
 
-    return {
-      gemiddeldGasverbruik: gasVerbruiken.length > 0 
-        ? gasVerbruiken.reduce((a, b) => a + b, 0) / gasVerbruiken.length 
-        : 1200,
-      percentageGaswoningen: gasWoningen.length > 0
-        ? gasWoningen.reduce((a, b) => a + b, 0) / gasWoningen.length
-        : 90,
-      percentageEengezins: eengezins.length > 0
-        ? eengezins.reduce((a, b) => a + b, 0) / eengezins.length
-        : 50,
-      percentageMeergezins: meergezins.length > 0
-        ? meergezins.reduce((a, b) => a + b, 0) / meergezins.length
-        : 50
-    };
+    if (buurtenList.length === 0) {
+      return { buurten: [], strategieComparisons: [] };
+    }
+
+    const baselineData = getStrategieData(buurtenList, baselineKolom);
+
+    // Filter beschikbare strategieën
+    let kolommen = pblData.strategieKolommen || [];
+    if (scenarioFilters.schillabel) {
+      kolommen = filterStrategies(kolommen, { schillabel: scenarioFilters.schillabel });
+    }
+    if (!scenarioFilters.toonVarianten) {
+      kolommen = kolommen.filter(k => 
+        k.startsWith('Strategie_') || 
+        k.includes('Referentie') || 
+        k.includes('Laagste_Nationale_Kosten')
+      );
+    }
+    kolommen = sortStrategiesForDisplay(kolommen);
+
+    const comparisons = kolommen.map(kolom => {
+      const data = getStrategieData(buurtenList, kolom);
+      const code = getStrategieCodeFromKolom(kolom);
+      const co2Reductie = berekenCO2Reductie(data, baselineData);
+      
+      return {
+        kolom,
+        code,
+        label: getStrategieLabelFromKolom(kolom),
+        color: getStrategieColor(code),
+        icon: getStrategieIcon(code),
+        data,
+        co2Reductie,
+        metrics: {
+          kostenPerTon: data.gemiddeldes?.H17_Nat_meerkost_CO2 || 0,
+          totaleKosten: data.gemiddeldes?.H16_Nat_meerkost || 0
+        }
+      };
+    });
+
+    return { buurten: buurtenList, strategieComparisons: comparisons };
+  }, [pblData, selectedBuurten, baselineKolom, scenarioFilters]);
+
+  // Toggle scenario selectie
+  const toggleScenario = (kolom) => {
+    setSelectedStrategies(prev => 
+      prev.includes(kolom) 
+        ? prev.filter(k => k !== kolom)
+        : [...prev, kolom]
+    );
   };
 
-  // Bereken totalen per scenario
-  const berekenScenarios = () => {
-    const totaalWoningen = selectedBuurten.reduce((sum, code) => {
-      return sum + (cbsData[code]?.aantalWoningen || 0);
-    }, 0);
-
-    if (totaalWoningen === 0) return null;
-
-    const cbsInfo = getGemiddeldeCBSData();
-    const gasEquivalentInKWh = cbsInfo.gemiddeldGasverbruik * 9.77;
-
-    // Bepaal isolatiekosten op basis van woningtype
-    const gemiddeldIsolatieKosten = 
-      (cbsInfo.percentageEengezins / 100 * kengetallen.isolatieKostenGoed) +
-      (cbsInfo.percentageMeergezins / 100 * kengetallen.isolatieKostenBasis);
-
-    // All-Electric Scenario
-    const allElectric = {
-      naam: 'All-Electric',
-      icon: '⚡',
-      kleur: '#83AF9A',
-      investeringPerWoning: 
-        gemiddeldIsolatieKosten + 
-        kengetallen.warmtepompKosten + 
-        kengetallen.elektriciteitsverzwaringPerWoning -
-        kengetallen.isdeSubsidieWP,
-      jaarlijkseKostenPerWoning: 
-        (gasEquivalentInKWh * 0.3 * kengetallen.elektriciteitTarief) + 
-        kengetallen.warmtepompOnderhoud,
-      co2ReductiePercentage: 100,
-      doorlooptijd: kengetallen.doorlooptijdAllElectric,
-      voordelen: ['Volledig aardgasvrij', 'Geen gasnet onderhoud', 'Hoge CO2 reductie'],
-      nadelen: ['Hoge initiële kosten', 'Netbelasting', 'Goede isolatie vereist'],
-      gebaseerdOp: `${cbsInfo.percentageGaswoningen.toFixed(0)}% gaswoningen, gem. ${Math.round(cbsInfo.gemiddeldGasverbruik)} m³/jaar`
-    };
-
-    // Hybride Scenario
-    const hybride = {
-      naam: 'Hybride',
-      icon: '🔄',
-      kleur: '#6f9884',
-      investeringPerWoning: 
-        kengetallen.isolatieKostenBasis + 
-        kengetallen.hybridePompKosten -
-        kengetallen.isdeSubsidieHybride,
-      jaarlijkseKostenPerWoning: 
-        (gasEquivalentInKWh * 0.5 * kengetallen.elektriciteitTarief) + 
-        (cbsInfo.gemiddeldGasverbruik * 0.3 * kengetallen.groenGasTarief) + 
-        kengetallen.hybridePompOnderhoud,
-      co2ReductiePercentage: 70,
-      doorlooptijd: kengetallen.doorlooptijdHybride,
-      voordelen: ['Lagere initiële kosten', 'Gasnet blijft beschikbaar', 'Snelle implementatie'],
-      nadelen: ['Nog deels afhankelijk van gas', 'Beperkte CO2 reductie', 'Transitie scenario'],
-      gebaseerdOp: `Hybride geschikt voor ${cbsInfo.percentageGaswoningen.toFixed(0)}% van woningen`
-    };
-
-    // Collectief Warmtenet - schaalvoordeel bij meer woningen
-    const schaalkorting = Math.min(totaalWoningen / 500, 1.5); // Max 50% korting bij grote aantallen
-    const collectief = {
-      naam: 'Collectief Warmtenet',
-      icon: '🏘️',
-      kleur: '#20423C',
-      investeringPerWoning: 
-        kengetallen.isolatieKostenBasis + 
-        kengetallen.warmtenetAansluiting +
-        (kengetallen.infrastructuurKostenPerWoning / schaalkorting),
-      jaarlijkseKostenPerWoning: 
-        (gasEquivalentInKWh * kengetallen.warmtenetLevering / 9.77) + 
-        kengetallen.warmtenetOnderhoud,
-      co2ReductiePercentage: 95,
-      doorlooptijd: kengetallen.doorlooptijdCollectief,
-      voordelen: ['Schaalvoordeel', 'Zeer lage CO2', 'Geen individuele installatie'],
-      nadelen: ['Lange doorlooptijd', 'Afhankelijk van warmtebron', 'Hoge infrastructuurkosten'],
-      gebaseerdOp: `${totaalWoningen} woningen → schaalkorting ${((1 - 1/schaalkorting) * 100).toFixed(0)}%`
-    };
-
-    return {
-      totaalWoningen,
-      cbsInfo,
-      scenarios: [allElectric, hybride, collectief]
-    };
-  };
-
-  const resultaten = berekenScenarios();
-
-  const updateKengetal = (key, value) => {
-    setKengetallen(prev => ({
-      ...prev,
-      [key]: parseFloat(value) || 0
-    }));
-  };
-
-  const renderKengetallen = () => (
-    <div className="space-y-4">
-      {/* Info box */}
-      <div className="p-4 rounded-xl border-2" style={{ 
-        background: 'rgba(131, 175, 154, 0.1)',
-        borderColor: '#83AF9A'
-      }}>
-        <p className="text-sm" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-          💡 <strong>Tip:</strong> Pas de kengetallen hieronder aan om te zien hoe dit de scenario's beïnvloedt. 
-          De berekeningen worden automatisch bijgewerkt.
+  // Render functies voor tabs
+  const renderPBLStartanalyse = () => (
+    <div className="space-y-6 p-6">
+      <div className="bg-white p-6 rounded-xl shadow-lg">
+        <h2 className="text-xl font-bold mb-4" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
+          📊 PBL Scenario Data Upload
+        </h2>
+        <p className="mb-4" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
+          Upload de ZIP file met PBL scenario data voor dit gebied. De ZIP moet 3 CSV bestanden bevatten:
         </p>
+        <ul className="list-disc list-inside mb-6 space-y-1" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
+          <li><strong>strategie*.csv</strong> - Scenario vergelijkingen</li>
+          <li><strong>bebouwing*.csv</strong> - Bebouwingsdetails</li>
+          <li><strong>totaalbebouwing*.csv</strong> - Totaaloverzicht</li>
+        </ul>
+
+        <ScenarioUpload 
+          onDataParsed={onPBLDataParsed}
+          existingData={pblData}
+        />
       </div>
 
-      {/* Isolatie */}
-      <div className="p-4 rounded-xl border-2" style={{ 
-        background: 'white',
-        borderColor: '#F3F3E2'
-      }}>
-        <h3 className="font-bold mb-3 flex items-center" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-          🏠 Isolatiekosten (per woning)
-        </h3>
-        <div className="space-y-3">
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Basisisolatie (label C/D)
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                value={kengetallen.isolatieKostenBasis}
-                onChange={(e) => updateKengetal('isolatieKostenBasis', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
+      {pblData && (
+        <div className="bg-white p-6 rounded-xl shadow-lg">
+          <h3 className="text-lg font-bold mb-4" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
+            📋 Data Overzicht
+          </h3>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="p-4 rounded-lg" style={{ background: '#F3F3E2' }}>
+              <p className="text-sm mb-1" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
+                Aantal buurten
+              </p>
+              <p className="text-2xl font-bold" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
+                {pblData.metadata?.aantalBuurten || 0}
+              </p>
             </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Goede isolatie (label B)
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                value={kengetallen.isolatieKostenGoed}
-                onChange={(e) => updateKengetal('isolatieKostenGoed', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
+
+            <div className="p-4 rounded-lg" style={{ background: '#F3F3E2' }}>
+              <p className="text-sm mb-1" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
+                Scenario kolommen
+              </p>
+              <p className="text-2xl font-bold" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
+                {pblData.metadata?.aantalStrategieKolommen || 0}
+              </p>
             </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Zeer goede isolatie (label A+)
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                value={kengetallen.isolatieKostenZeerGoed}
-                onChange={(e) => updateKengetal('isolatieKostenZeerGoed', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
+
+            <div className="p-4 rounded-lg" style={{ background: '#F3F3E2' }}>
+              <p className="text-sm mb-1" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
+                Geselecteerde buurten
+              </p>
+              <p className="text-2xl font-bold" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
+                {selectedBuurten?.length || 0}
+              </p>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* All-Electric */}
-      <div className="p-4 rounded-xl border-2" style={{ 
-        background: 'white',
-        borderColor: '#F3F3E2'
-      }}>
-        <h3 className="font-bold mb-3 flex items-center" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-          ⚡ All-Electric Kengetallen
-        </h3>
-        <div className="space-y-3">
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Warmtepomp installatie
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                value={kengetallen.warmtepompKosten}
-                onChange={(e) => updateKengetal('warmtepompKosten', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Jaarlijks onderhoud
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                value={kengetallen.warmtepompOnderhoud}
-                onChange={(e) => updateKengetal('warmtepompOnderhoud', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Elektriciteitstarief (per kWh)
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                step="0.01"
-                value={kengetallen.elektriciteitTarief}
-                onChange={(e) => updateKengetal('elektriciteitTarief', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Netverzwaring per woning
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                value={kengetallen.elektriciteitsverzwaringPerWoning}
-                onChange={(e) => updateKengetal('elektriciteitsverzwaringPerWoning', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              ISDE subsidie
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                value={kengetallen.isdeSubsidieWP}
-                onChange={(e) => updateKengetal('isdeSubsidieWP', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Doorlooptijd (jaren)
-            </label>
-            <input
-              type="number"
-              value={kengetallen.doorlooptijdAllElectric}
-              onChange={(e) => updateKengetal('doorlooptijdAllElectric', e.target.value)}
-              className="w-full px-3 py-2 border-2 rounded-lg"
-              style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-            />
-          </div>
+      {!pblData && (
+        <div className="bg-blue-50 p-6 rounded-xl border-2 border-blue-200">
+          <h3 className="text-lg font-bold mb-2" style={{ color: '#1E40AF', fontFamily: 'Raleway, sans-serif' }}>
+            💡 Hoe te gebruiken
+          </h3>
+          <ol className="list-decimal list-inside space-y-2" style={{ color: '#1E3A8A', fontFamily: 'Raleway, sans-serif' }}>
+            <li>Upload de ZIP file met PBL data voor dit gebied</li>
+            <li>De data wordt automatisch verwerkt en gevalideerd</li>
+            <li>Ga naar "Vergelijken" om scenario's te analyseren</li>
+            <li>Gebruik filters om specifieke varianten te bekijken</li>
+          </ol>
         </div>
-      </div>
-
-      {/* Hybride */}
-      <div className="p-4 rounded-xl border-2" style={{ 
-        background: 'white',
-        borderColor: '#F3F3E2'
-      }}>
-        <h3 className="font-bold mb-3 flex items-center" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-          🔄 Hybride Kengetallen
-        </h3>
-        <div className="space-y-3">
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Hybride warmtepomp installatie
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                value={kengetallen.hybridePompKosten}
-                onChange={(e) => updateKengetal('hybridePompKosten', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Jaarlijks onderhoud
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                value={kengetallen.hybridePompOnderhoud}
-                onChange={(e) => updateKengetal('hybridePompOnderhoud', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Groen gas tarief (per m³)
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                step="0.01"
-                value={kengetallen.groenGasTarief}
-                onChange={(e) => updateKengetal('groenGasTarief', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              ISDE subsidie
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                value={kengetallen.isdeSubsidieHybride}
-                onChange={(e) => updateKengetal('isdeSubsidieHybride', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Doorlooptijd (jaren)
-            </label>
-            <input
-              type="number"
-              value={kengetallen.doorlooptijdHybride}
-              onChange={(e) => updateKengetal('doorlooptijdHybride', e.target.value)}
-              className="w-full px-3 py-2 border-2 rounded-lg"
-              style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Collectief */}
-      <div className="p-4 rounded-xl border-2" style={{ 
-        background: 'white',
-        borderColor: '#F3F3E2'
-      }}>
-        <h3 className="font-bold mb-3 flex items-center" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-          🏘️ Collectief Warmtenet Kengetallen
-        </h3>
-        <div className="space-y-3">
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Aansluiting per woning
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                value={kengetallen.warmtenetAansluiting}
-                onChange={(e) => updateKengetal('warmtenetAansluiting', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Warmtelevering (per GJ)
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                step="0.01"
-                value={kengetallen.warmtenetLevering}
-                onChange={(e) => updateKengetal('warmtenetLevering', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Jaarlijks onderhoud
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                value={kengetallen.warmtenetOnderhoud}
-                onChange={(e) => updateKengetal('warmtenetOnderhoud', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Infrastructuur per woning
-            </label>
-            <div className="flex items-center space-x-2">
-              <span className="text-lg">€</span>
-              <input
-                type="number"
-                value={kengetallen.infrastructuurKostenPerWoning}
-                onChange={(e) => updateKengetal('infrastructuurKostenPerWoning', e.target.value)}
-                className="flex-1 px-3 py-2 border-2 rounded-lg"
-                style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium block mb-1" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-              Doorlooptijd (jaren)
-            </label>
-            <input
-              type="number"
-              value={kengetallen.doorlooptijdCollectief}
-              onChange={(e) => updateKengetal('doorlooptijdCollectief', e.target.value)}
-              className="w-full px-3 py-2 border-2 rounded-lg"
-              style={{ borderColor: '#F3F3E2', fontFamily: 'Raleway, sans-serif' }}
-            />
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
 
-  const renderScenarios = () => {
-    if (!resultaten) {
+  const renderScenarioVergelijking = () => {
+    if (!pblData) {
       return (
-        <div className="p-8 text-center">
-          <p style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
-            Selecteer eerst buurten om scenario's te berekenen
-          </p>
+        <div className="flex items-center justify-center h-full">
+          <div className="text-center p-8">
+            <p className="text-lg font-semibold mb-2" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
+              Geen PBL data beschikbaar
+            </p>
+            <p className="mb-4" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
+              Upload eerst PBL scenario data in het "PBL data" tabblad
+            </p>
+            <button
+              onClick={() => setActiveSubTab('pbl')}
+              className="px-6 py-3 rounded-lg font-semibold"
+              style={{
+                background: '#83AF9A',
+                color: 'white',
+                fontFamily: 'Raleway, sans-serif'
+              }}
+            >
+              Ga naar PBL Data Upload
+            </button>
+          </div>
         </div>
       );
     }
 
-    const { totaalWoningen, cbsInfo, scenarios } = resultaten;
-
     return (
-      <div className="space-y-4">
-        {/* Overzicht Header */}
-        <div className="p-4 rounded-xl border-2" style={{ 
-          background: 'linear-gradient(135deg, rgba(131, 175, 154, 0.2) 0%, rgba(243, 243, 226, 0.5) 100%)',
-          borderColor: '#83AF9A'
-        }}>
-          <h3 className="font-bold text-lg mb-2" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-            Scenario Analyse Warmtetransitie
-          </h3>
-          <p className="text-sm" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
-            Berekend voor <span className="font-bold" style={{ color: '#20423C' }}>{totaalWoningen.toLocaleString('nl-NL')}</span> woningen 
-            in {selectedBuurten.length} buurten
-          </p>
-          <div className="mt-2 text-xs space-y-1" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
-            <p>📊 {cbsInfo.percentageEengezins.toFixed(0)}% eengezinswoningen, {cbsInfo.percentageMeergezins.toFixed(0)}% meergezinswoningen</p>
-            <p>🔥 {cbsInfo.percentageGaswoningen.toFixed(0)}% gaswoningen (gem. {Math.round(cbsInfo.gemiddeldGasverbruik)} m³/jaar)</p>
-          </div>
-        </div>
-
-        {/* Scenario Cards */}
-        {scenarios.map((scenario, idx) => (
-          <div key={idx} className="p-4 rounded-xl border-2 shadow-lg transition-all duration-300 hover:scale-102" style={{ 
-            background: 'white',
-            borderColor: scenario.kleur
-          }}>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-bold text-lg flex items-center" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-                <span className="text-2xl mr-2">{scenario.icon}</span>
-                {scenario.naam}
-              </h3>
-              <div className="px-3 py-1 rounded-full text-xs font-semibold" style={{ 
-                background: `${scenario.kleur}20`,
-                color: scenario.kleur,
-                fontFamily: 'Raleway, sans-serif'
-              }}>
-                {scenario.co2ReductiePercentage}% CO₂ reductie
-              </div>
-            </div>
-
-            {/* Gebaseerd op CBS data */}
-            <p className="text-xs mb-3 italic" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
-              💡 {scenario.gebaseerdOp}
-            </p>
-
-            {/* Kosten Grid */}
-            <div className="grid grid-cols-2 gap-3 mb-3">
-              <div className="p-3 rounded-lg" style={{ background: '#F3F3E2' }}>
-                <p className="text-xs mb-1" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
-                  Investering per woning
-                </p>
-                <p className="text-xl font-bold" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-                  €{Math.round(scenario.investeringPerWoning).toLocaleString('nl-NL')}
-                </p>
-              </div>
-              <div className="p-3 rounded-lg" style={{ background: '#F3F3E2' }}>
-                <p className="text-xs mb-1" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
-                  Totale investering
-                </p>
-                <p className="text-xl font-bold" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-                  €{(scenario.investeringPerWoning * totaalWoningen / 1000000).toFixed(1)}M
-                </p>
-              </div>
-              <div className="p-3 rounded-lg" style={{ background: '#F3F3E2' }}>
-                <p className="text-xs mb-1" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
-                  Jaarlijks per woning
-                </p>
-                <p className="text-xl font-bold" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-                  €{Math.round(scenario.jaarlijkseKostenPerWoning).toLocaleString('nl-NL')}
-                </p>
-              </div>
-              <div className="p-3 rounded-lg" style={{ background: '#F3F3E2' }}>
-                <p className="text-xs mb-1" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
-                  Doorlooptijd
-                </p>
-                <p className="text-xl font-bold" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-                  {scenario.doorlooptijd} jaar
-                </p>
-              </div>
-            </div>
-
-            {/* Voordelen & Nadelen */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <p className="text-xs font-semibold mb-2" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-                  ✓ Voordelen
-                </p>
-                <ul className="space-y-1">
-                  {scenario.voordelen.map((v, i) => (
-                    <li key={i} className="text-xs" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
-                      • {v}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div>
-                <p className="text-xs font-semibold mb-2" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-                  ⚠ Aandachtspunten
-                </p>
-                <ul className="space-y-1">
-                  {scenario.nadelen.map((n, i) => (
-                    <li key={i} className="text-xs" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
-                      • {n}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </div>
-        ))}
-
-        {/* Vergelijkingstabel */}
-        <div className="p-4 rounded-xl border-2" style={{ 
-          background: 'white',
-          borderColor: '#83AF9A'
-        }}>
-          <h3 className="font-bold mb-3" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-            📊 Vergelijking
-          </h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr style={{ borderBottom: '2px solid #F3F3E2' }}>
-                  <th className="text-left p-2" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>Criterium</th>
-                  {scenarios.map((s, i) => (
-                    <th key={i} className="text-center p-2" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-                      {s.icon} {s.naam}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                <tr style={{ borderBottom: '1px solid #F3F3E2' }}>
-                  <td className="p-2" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>Investering/woning</td>
-                  {scenarios.map((s, i) => (
-                    <td key={i} className="text-center p-2 font-semibold" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-                      €{Math.round(s.investeringPerWoning).toLocaleString('nl-NL')}
-                    </td>
-                  ))}
-                </tr>
-                <tr style={{ borderBottom: '1px solid #F3F3E2' }}>
-                  <td className="p-2" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>Jaarlijks/woning</td>
-                  {scenarios.map((s, i) => (
-                    <td key={i} className="text-center p-2 font-semibold" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-                      €{Math.round(s.jaarlijkseKostenPerWoning).toLocaleString('nl-NL')}
-                    </td>
-                  ))}
-                </tr>
-                <tr style={{ borderBottom: '1px solid #F3F3E2' }}>
-                  <td className="p-2" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>CO₂ reductie</td>
-                  {scenarios.map((s, i) => (
-                    <td key={i} className="text-center p-2 font-semibold" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-                      {s.co2ReductiePercentage}%
-                    </td>
-                  ))}
-                </tr>
-                <tr>
-                  <td className="p-2" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>Doorlooptijd</td>
-                  {scenarios.map((s, i) => (
-                    <td key={i} className="text-center p-2 font-semibold" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
-                      {s.doorlooptijd} jaar
-                    </td>
-                  ))}
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
+      <ScenarioComparison
+        parsedData={pblData}
+        selectedBuurten={selectedBuurten}
+        baselineKolom={baselineKolom}
+        selectedStrategies={selectedStrategies}
+      />
     );
   };
 
-  const subTabs = [
-    { id: 'scenarios', label: 'Scenario\'s', icon: '📊' },
-    { id: 'kengetallen', label: 'Kengetallen', icon: '⚙️' }
-  ];
+  const renderPlaceholder = (title, icon) => (
+    <div className="p-8 text-center">
+      <p className="text-lg font-semibold mb-2" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
+        {icon} {title}
+      </p>
+      <p style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
+        Komt binnenkort
+      </p>
+    </div>
+  );
 
+  // MAIN RETURN
   return (
-    <div className="h-full flex flex-col">
-      {/* Sub-tab navigatie */}
-      <div className="border-b-2 p-2" style={{ 
-        background: 'white',
-        borderColor: '#F3F3E2'
-      }}>
-        <div className="flex space-x-1">
-          {subTabs.map(tab => (
+    <div className="h-full flex relative" style={{ background: '#FAFAFA' }}>
+      
+      {/* UITSCHUIFBARE SIDEBAR - VANAF ABSOLUTE LINKS (over selectie sidebar) */}
+      <div 
+        className="fixed left-0 top-0 h-full transition-all duration-300 shadow-2xl"
+        style={{
+          width: '400px',
+          transform: sidebarOpen ? 'translateX(0)' : 'translateX(-400px)',
+          zIndex: 9999
+        }}
+      >
+        <div className="h-full flex flex-col" style={{ background: 'white', width: '400px' }}>
+          {/* Sidebar header */}
+          <div className="p-4 border-b flex items-center justify-between" style={{ borderColor: '#F3F3E2' }}>
+            <h3 className="font-bold text-lg" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
+              Filters & Selectie
+            </h3>
             <button
-              key={tab.id}
-              onClick={() => setActiveSubTab(tab.id)}
-              className="px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 whitespace-nowrap"
-              style={{ 
-                background: activeSubTab === tab.id ? '#83AF9A' : '#F3F3E2',
-                color: '#20423C',
-                fontFamily: 'Raleway, sans-serif'
-              }}
-              onMouseEnter={(e) => {
-                if (activeSubTab !== tab.id) {
-                  e.target.style.background = 'rgba(131, 175, 154, 0.3)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (activeSubTab !== tab.id) {
-                  e.target.style.background = '#F3F3E2';
-                }
-              }}
+              onClick={() => setSidebarOpen(false)}
+              className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
             >
-              {tab.icon} {tab.label}
+              <ChevronLeft size={20} style={{ color: '#6b7280' }} />
             </button>
-          ))}
+          </div>
+
+          {/* Sidebar content - SCROLLABLE */}
+          <div className="flex-1 overflow-y-auto">
+            {/* Baseline selector */}
+            <div className="p-4 border-b" style={{ borderColor: '#F3F3E2' }}>
+              <label className="block text-sm font-semibold mb-2" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
+                Baseline referentie:
+              </label>
+              <div className="flex space-x-2">
+                <button
+                  onClick={() => setBaselineJaar('2023')}
+                  className="flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all"
+                  style={{
+                    background: baselineJaar === '2023' ? '#83AF9A' : '#F3F3E2',
+                    color: baselineJaar === '2023' ? 'white' : '#20423C',
+                    fontFamily: 'Raleway, sans-serif'
+                  }}
+                >
+                  2023
+                </button>
+                <button
+                  onClick={() => setBaselineJaar('2030')}
+                  className="flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all"
+                  style={{
+                    background: baselineJaar === '2030' ? '#83AF9A' : '#F3F3E2',
+                    color: baselineJaar === '2030' ? 'white' : '#20423C',
+                    fontFamily: 'Raleway, sans-serif'
+                  }}
+                >
+                  2030
+                </button>
+              </div>
+            </div>
+
+            {/* Filters - alleen bij scenario vergelijking EN als data beschikbaar */}
+            {activeSubTab === 'vergelijking' && pblData && (
+              <>
+                {/* Schillabel filter */}
+                <div className="p-4 border-b" style={{ borderColor: '#F3F3E2' }}>
+                  <label className="block text-sm font-semibold mb-2" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
+                    Schillabel:
+                  </label>
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => setScenarioFilters(f => ({ ...f, schillabel: null }))}
+                      className="flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all"
+                      style={{
+                        background: scenarioFilters.schillabel === null ? '#83AF9A' : '#F3F3E2',
+                        color: scenarioFilters.schillabel === null ? 'white' : '#20423C',
+                        fontFamily: 'Raleway, sans-serif'
+                      }}
+                    >
+                      Alle
+                    </button>
+                    <button
+                      onClick={() => setScenarioFilters(f => ({ ...f, schillabel: 'B+' }))}
+                      className="flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all"
+                      style={{
+                        background: scenarioFilters.schillabel === 'B+' ? '#83AF9A' : '#F3F3E2',
+                        color: scenarioFilters.schillabel === 'B+' ? 'white' : '#20423C',
+                        fontFamily: 'Raleway, sans-serif'
+                      }}
+                    >
+                      B+
+                    </button>
+                    <button
+                      onClick={() => setScenarioFilters(f => ({ ...f, schillabel: 'D+' }))}
+                      className="flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all"
+                      style={{
+                        background: scenarioFilters.schillabel === 'D+' ? '#83AF9A' : '#F3F3E2',
+                        color: scenarioFilters.schillabel === 'D+' ? 'white' : '#20423C',
+                        fontFamily: 'Raleway, sans-serif'
+                      }}
+                    >
+                      D+
+                    </button>
+                  </div>
+                </div>
+
+                {/* Varianten toggle */}
+                <div className="p-4 border-b" style={{ borderColor: '#F3F3E2' }}>
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={scenarioFilters.toonVarianten}
+                      onChange={(e) => setScenarioFilters(f => ({ ...f, toonVarianten: e.target.checked }))}
+                      className="rounded"
+                      style={{ accentColor: '#83AF9A' }}
+                    />
+                    <span className="text-sm font-semibold" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
+                      Toon alle varianten
+                    </span>
+                  </label>
+                  <p className="text-xs mt-1 ml-6" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
+                    Inclusief s1a, s1b, s2a-f, s3a-h, s4a-b
+                  </p>
+                </div>
+
+                {/* Scenario selectie */}
+                <div className="p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-sm font-semibold" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
+                      Selecteer scenario's:
+                    </p>
+                    <span className="text-xs" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
+                      {selectedStrategies.length} van {strategieComparisons.length}
+                    </span>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    {strategieComparisons.map((strat, idx) => (
+                      <label
+                        key={idx}
+                        className="flex items-center space-x-3 p-3 rounded-lg cursor-pointer transition-all hover:shadow-md"
+                        style={{ 
+                          background: selectedStrategies.includes(strat.kolom) ? `${strat.color}15` : '#F9FAFB',
+                          border: `2px solid ${selectedStrategies.includes(strat.kolom) ? strat.color : '#F3F3E2'}`
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedStrategies.includes(strat.kolom)}
+                          onChange={() => toggleScenario(strat.kolom)}
+                          className="rounded flex-shrink-0"
+                          style={{ accentColor: strat.color }}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-lg flex-shrink-0">{strat.icon}</span>
+                            <p className="text-sm font-semibold truncate" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
+                              {strat.label}
+                            </p>
+                          </div>
+                          <div className="flex items-center justify-between mt-1">
+                            <span className="text-xs" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
+                              {formatEuro(strat.metrics.kostenPerTon, true)}/ton
+                            </span>
+                            <span className="text-xs font-semibold" style={{ 
+                              color: strat.co2Reductie > 0 ? '#10B981' : '#6b7280', 
+                              fontFamily: 'Raleway, sans-serif' 
+                            }}>
+                              {strat.co2Reductie.toFixed(0)}% CO₂↓
+                            </span>
+                          </div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+
+                  {/* Quick actions */}
+                  <div className="mt-4 flex space-x-2">
+                    <button
+                      onClick={() => setSelectedStrategies(strategieComparisons.map(s => s.kolom))}
+                      className="flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all"
+                      style={{
+                        background: '#F3F3E2',
+                        color: '#20423C',
+                        fontFamily: 'Raleway, sans-serif'
+                      }}
+                    >
+                      Selecteer alle
+                    </button>
+                    <button
+                      onClick={() => setSelectedStrategies([])}
+                      className="flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all"
+                      style={{
+                        background: '#F3F3E2',
+                        color: '#20423C',
+                        fontFamily: 'Raleway, sans-serif'
+                      }}
+                    >
+                      Deselecteer alle
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Stats - altijd tonen */}
+            <div className="p-4 space-y-3 border-t" style={{ borderColor: '#F3F3E2' }}>
+              <div className="p-3 rounded-lg" style={{ background: '#F3F3E2' }}>
+                <p className="text-xs font-semibold mb-1" style={{ color: '#6b7280', fontFamily: 'Raleway, sans-serif' }}>
+                  Geselecteerde buurten
+                </p>
+                <p className="text-lg font-bold" style={{ color: '#20423C', fontFamily: 'Raleway, sans-serif' }}>
+                  {selectedBuurten?.length || 0}
+                </p>
+              </div>
+
+              {pblData && (
+                <div className="p-3 rounded-lg" style={{ background: '#DCFCE7' }}>
+                  <p className="text-xs font-semibold mb-1" style={{ color: '#166534', fontFamily: 'Raleway, sans-serif' }}>
+                    PBL Data geladen
+                  </p>
+                  <p className="text-sm" style={{ color: '#166534', fontFamily: 'Raleway, sans-serif' }}>
+                    {pblData.metadata?.aantalBuurten} buurten<br />
+                    {pblData.metadata?.aantalStrategieKolommen} scenario's
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4">
-        {activeSubTab === 'kengetallen' && renderKengetallen()}
-        {activeSubTab === 'scenarios' && renderScenarios()}
+      {/* Toggle button voor sidebar (altijd zichtbaar, aan absolute linkerkant) */}
+      {!sidebarOpen && (
+        <button
+          onClick={() => setSidebarOpen(true)}
+          className="fixed left-0 top-1/2 transform -translate-y-1/2 p-3 rounded-r-lg shadow-lg transition-all hover:pl-4"
+          style={{ background: '#83AF9A', zIndex: 9998 }}
+        >
+          <ChevronRight size={24} style={{ color: 'white' }} />
+        </button>
+      )}
+
+      {/* MAIN CONTENT AREA */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden">
+        <div className="flex-1 overflow-hidden">
+          {activeSubTab === 'pbl' && (
+            <div className="h-full overflow-y-auto">{renderPBLStartanalyse()}</div>
+          )}
+          {activeSubTab === 'vergelijking' && (
+            <div className="h-full overflow-hidden">{renderScenarioVergelijking()}</div>
+          )}
+          {activeSubTab === 'varianten' && (
+            <div className="h-full overflow-y-auto">{renderPlaceholder('Variant Analyse', '🔍')}</div>
+          )}
+          {activeSubTab === 'kosten' && (
+            <div className="h-full overflow-y-auto">{renderPlaceholder('Kosten Details', '💰')}</div>
+          )}
+          {activeSubTab === 'energie' && (
+            <div className="h-full overflow-y-auto">{renderPlaceholder('Energie Details', '⚡')}</div>
+          )}
+          {activeSubTab === 'aansluitingen' && (
+            <div className="h-full overflow-y-auto">{renderPlaceholder('Aansluitingen', '🔌')}</div>
+          )}
+        </div>
+      </div>
+
+      {/* VERTICALE TABS - RECHTS (zonder emoji's, tekst 90° gedraaid) */}
+      <div className="flex flex-col justify-center py-4 pr-2 space-y-2">
+        {subTabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveSubTab(tab.id)}
+            className="relative group transition-all duration-200"
+            style={{
+              width: activeSubTab === tab.id ? '50px' : '44px',
+              height: '140px',
+            }}
+          >
+            <div
+              className="absolute inset-0 rounded-l-xl shadow-lg transition-all duration-200 flex items-center justify-center"
+              style={{
+                background: activeSubTab === tab.id ? tab.color : `${tab.color}40`,
+                borderRight: activeSubTab === tab.id ? `4px solid ${tab.color}` : 'none',
+              }}
+            >
+              <div 
+                style={{ 
+                  transform: 'rotate(-90deg)',
+                  whiteSpace: 'nowrap',
+                  transformOrigin: 'center center'
+                }}
+              >
+                <span 
+                  className="text-sm font-bold"
+                  style={{ 
+                    color: activeSubTab === tab.id ? 'white' : '#20423C',
+                    fontFamily: 'Raleway, sans-serif',
+                  }}
+                >
+                  {tab.label}
+                </span>
+              </div>
+            </div>
+
+            {activeSubTab !== tab.id && (
+              <div
+                className="absolute inset-0 rounded-l-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+                style={{ background: `${tab.color}20` }}
+              />
+            )}
+          </button>
+        ))}
       </div>
     </div>
   );

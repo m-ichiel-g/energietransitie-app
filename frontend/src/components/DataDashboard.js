@@ -559,7 +559,7 @@ function TabUtiliteit({ data }) {
         <div className="bg-white p-6 rounded-lg shadow" style={{ borderLeft: `4px solid ${COLORS.orange}` }}>
           <p className="text-sm font-semibold mb-1" style={{ color: COLORS.gray }}>Totaal Oppervlak</p>
           <p className="text-3xl font-bold" style={{ color: COLORS.orange }}>
-            {totalM2 > 0 ? Math.round(totalM2).toLocaleString('nl-NL') : '-'}
+            {totalGebouwen > 0 ? totalGebouwen.toLocaleString('nl-NL') : '-'}
           </p>
           <p className="text-xs" style={{ color: COLORS.gray }}>m² BVO</p>
         </div>
